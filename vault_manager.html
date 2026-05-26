@@ -284,12 +284,11 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
 }
 </style>
 
-  <!-- Firebase -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-    const firebaseConfig = {
+  <!-- Firebase Compat SDK - synchronous load -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script>
+    const _fbConfig = {
       apiKey: "AIzaSyC0YkRWj2fEJSrEAfsSRJMxPri6QImSAT0",
       authDomain: "vault-spray-foam.firebaseapp.com",
       databaseURL: "https://vault-spray-foam-default-rtdb.firebaseio.com",
@@ -298,53 +297,61 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
       messagingSenderId: "664365786455",
       appId: "1:664365786455:web:0958942e3747caeec0ca12"
     };
+    firebase.initializeApp(_fbConfig);
+    const _fbDb = firebase.database();
+    const _fbRef = _fbDb.ref('vault_ops');
+    let _fbReady = false;
+    let _skipNext = false;
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-    const dataRef = ref(db, 'vault_ops');
-
-    window._fbRef = dataRef;
-    window._fbSet = set;
-    window._fbReady = false;
-
-    onValue(dataRef, (snapshot) => {
+    _fbRef.on('value', snap => {
+      const remote = snap.val();
       const ss = document.getElementById('syncStatus');
+      if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
 
-      const remoteData = snapshot.val();
-
-      if (!window._fbReady) {
-        // First connection — decide what wins
-        window._fbReady = true;
+      if(!_fbReady) {
+        _fbReady = true;
         const localRaw = localStorage.getItem('vault_ops_v3');
-        const localData = localRaw ? JSON.parse(localRaw) : null;
-        const localHasJobs = localData && localData.jobs && localData.jobs.length > 0;
-        const remoteHasJobs = remoteData && remoteData.jobs && remoteData.jobs.length > 0;
+        let local = null;
+        try{ local = localRaw ? JSON.parse(localRaw) : null; }catch(e){}
+        const localHas = local && local.jobs && local.jobs.length > 0;
+        const remoteHas = remote && remote.jobs && remote.jobs.length > 0;
 
-        if (localHasJobs && !remoteHasJobs) {
-          // Local has data, Firebase is empty — push local up to Firebase
-          console.log('Firebase empty, pushing local data up');
-          set(dataRef, localData);
-          state = localData;
-        } else if (remoteHasJobs) {
-          // Firebase has data — use it as truth
-          console.log('Firebase has data, loading it');
-          state = remoteData;
+        if(localHas && !remoteHas) {
+          _skipNext = true;
+          _fbRef.set(local);
+          state = local;
+        } else if(remoteHas) {
+          state = remote;
           localStorage.setItem('vault_ops_v3', JSON.stringify(state));
         } else {
-          // Both empty
-          state = { jobs: [] };
+          state = {jobs:[]};
         }
-      } else {
-        // Subsequent updates — always trust Firebase
-        if (remoteData) {
-          state = remoteData;
-          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
-        }
+        if(typeof render === 'function') render();
+        return;
       }
 
-      if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
-      if(typeof render === 'function') render();
+      if(_skipNext){ _skipNext = false; return; }
+
+      // Remote update from another device - only merge if they have data
+      if(remote && remote.jobs && remote.jobs.length > 0) {
+        const localRaw = localStorage.getItem('vault_ops_v3');
+        let local = null;
+        try{ local = localRaw ? JSON.parse(localRaw) : null; }catch(e){}
+        // Only overwrite if remote has equal or more jobs
+        if(!local || !local.jobs || remote.jobs.length >= local.jobs.length) {
+          state = remote;
+          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
+          if(typeof render === 'function') render();
+        }
+      }
     });
+
+    window._fbSave = function(data) {
+      if(_fbReady) {
+        _skipNext = true;
+        _fbRef.set(data).catch(e => { console.error('FB save err:', e); _skipNext = false; });
+      }
+    };
   </script>
 </head>
 <body>
@@ -784,8 +791,6 @@ function clearAllJobs(){
 
 // ── RENDER ──
 function render(){
-  const ss=document.getElementById('syncStatus');
-  if(ss && window._fbReady) ss.innerHTML='<span style="color:var(--green-light)">● live</span>';
   updateWeekDisplay();
   renderJobsTab();
   // Keep briefing filter in sync with current date if not manually changed
