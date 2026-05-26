@@ -303,22 +303,47 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
     const db = getDatabase(app);
     const dataRef = ref(db, 'vault_ops');
 
-    // Expose to global scope for the main script
     window._fbRef = dataRef;
     window._fbSet = set;
-    window._fbOnValue = onValue;
-    window._fbReady = true;
+    window._fbReady = false;
 
-    // Listen for remote changes and update local + re-render
     onValue(dataRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        state = data;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      const ss = document.getElementById('syncStatus');
+
+      const remoteData = snapshot.val();
+
+      if (!window._fbReady) {
+        // First connection — decide what wins
+        window._fbReady = true;
+        const localRaw = localStorage.getItem('vault_ops_v3');
+        const localData = localRaw ? JSON.parse(localRaw) : null;
+        const localHasJobs = localData && localData.jobs && localData.jobs.length > 0;
+        const remoteHasJobs = remoteData && remoteData.jobs && remoteData.jobs.length > 0;
+
+        if (localHasJobs && !remoteHasJobs) {
+          // Local has data, Firebase is empty — push local up to Firebase
+          console.log('Firebase empty, pushing local data up');
+          set(dataRef, localData);
+          state = localData;
+        } else if (remoteHasJobs) {
+          // Firebase has data — use it as truth
+          console.log('Firebase has data, loading it');
+          state = remoteData;
+          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
+        } else {
+          // Both empty
+          state = { jobs: [] };
+        }
       } else {
-        state = { jobs: [] };
+        // Subsequent updates — always trust Firebase
+        if (remoteData) {
+          state = remoteData;
+          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
+        }
       }
-      render();
+
+      if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
+      if(typeof render === 'function') render();
     });
   </script>
 </head>
@@ -760,7 +785,7 @@ function clearAllJobs(){
 // ── RENDER ──
 function render(){
   const ss=document.getElementById('syncStatus');
-  if(ss)ss.innerHTML='<span style="color:var(--green-light)">● live</span>';
+  if(ss && window._fbReady) ss.innerHTML='<span style="color:var(--green-light)">● live</span>';
   updateWeekDisplay();
   renderJobsTab();
   // Keep briefing filter in sync with current date if not manually changed
