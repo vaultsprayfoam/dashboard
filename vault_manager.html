@@ -284,43 +284,34 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
 }
 </style>
 
-  <!-- Firebase Compat SDK - synchronous load -->
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
   <script>
-    const _fbConfig = {
-      apiKey: "AIzaSyC0YkRWj2fEJSrEAfsSRJMxPri6QImSAT0",
-      authDomain: "vault-spray-foam.firebaseapp.com",
-      databaseURL: "https://vault-spray-foam-default-rtdb.firebaseio.com",
-      projectId: "vault-spray-foam",
-      storageBucket: "vault-spray-foam.firebasestorage.app",
-      messagingSenderId: "664365786455",
-      appId: "1:664365786455:web:0958942e3747caeec0ca12"
-    };
-    firebase.initializeApp(_fbConfig);
-    const _fbDb = firebase.database();
-    const _fbRef = _fbDb.ref('vault_ops');
-    let _fbReady = false;
-    let _skipNext = false;
+    firebase.initializeApp({
+      apiKey:"AIzaSyC0YkRWj2fEJSrEAfsSRJMxPri6QImSAT0",
+      authDomain:"vault-spray-foam.firebaseapp.com",
+      databaseURL:"https://vault-spray-foam-default-rtdb.firebaseio.com",
+      projectId:"vault-spray-foam",
+      storageBucket:"vault-spray-foam.firebasestorage.app",
+      messagingSenderId:"664365786455",
+      appId:"1:664365786455:web:0958942e3747caeec0ca12"
+    });
+    const _fbRef = firebase.database().ref('vault_ops');
+    let _fbInit = false;
 
     _fbRef.on('value', snap => {
       const remote = snap.val();
       const ss = document.getElementById('syncStatus');
       if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
 
-      if(!_fbReady) {
-        _fbReady = true;
-        const localRaw = localStorage.getItem('vault_ops_v3');
-        let local = null;
-        try{ local = localRaw ? JSON.parse(localRaw) : null; }catch(e){}
-        const localHas = local && local.jobs && local.jobs.length > 0;
-        const remoteHas = remote && remote.jobs && remote.jobs.length > 0;
-
-        if(localHas && !remoteHas) {
-          _skipNext = true;
-          _fbRef.set(local);
-          state = local;
-        } else if(remoteHas) {
+      if(!_fbInit) {
+        _fbInit = true;
+        // First load: if Firebase empty and we have local data, push local up
+        const loc = (() => { try{ return JSON.parse(localStorage.getItem('vault_ops_v3')); }catch(e){ return null; } })();
+        if(loc && loc.jobs && loc.jobs.length > 0 && (!remote || !remote.jobs || remote.jobs.length === 0)) {
+          _fbRef.set(loc);
+          state = loc;
+        } else if(remote && remote.jobs && remote.jobs.length > 0) {
           state = remote;
           localStorage.setItem('vault_ops_v3', JSON.stringify(state));
         } else {
@@ -330,15 +321,10 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
         return;
       }
 
-      if(_skipNext){ _skipNext = false; return; }
-
-      // Remote update from another device - only merge if they have data
-      if(remote && remote.jobs && remote.jobs.length > 0) {
-        const localRaw = localStorage.getItem('vault_ops_v3');
-        let local = null;
-        try{ local = localRaw ? JSON.parse(localRaw) : null; }catch(e){}
-        // Only overwrite if remote has equal or more jobs
-        if(!local || !local.jobs || remote.jobs.length >= local.jobs.length) {
+      // Subsequent: only accept if remote has MORE jobs (another device added something)
+      if(remote && remote.jobs) {
+        const cur = state.jobs ? state.jobs.length : 0;
+        if(remote.jobs.length > cur) {
           state = remote;
           localStorage.setItem('vault_ops_v3', JSON.stringify(state));
           if(typeof render === 'function') render();
@@ -346,11 +332,8 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
       }
     });
 
-    window._fbSave = function(data) {
-      if(_fbReady) {
-        _skipNext = true;
-        _fbRef.set(data).catch(e => { console.error('FB save err:', e); _skipNext = false; });
-      }
+    window._fbPush = function(s) {
+      _fbRef.set(s).catch(e => console.error('Firebase push error:', e));
     };
   </script>
 </head>
