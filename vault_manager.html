@@ -297,43 +297,41 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
       appId:"1:664365786455:web:0958942e3747caeec0ca12"
     });
     const _fbRef = firebase.database().ref('vault_ops');
-    let _fbInit = false;
+    let _fbConnected = false;
 
-    _fbRef.on('value', snap => {
-      const remote = snap.val();
+    // Only listen ONCE on startup to check if Firebase is empty
+    // If Firebase is empty and we have local data, push it up
+    // After that, MANAGER NEVER READS FROM FIREBASE AGAIN
+    _fbRef.once('value', snap => {
+      _fbConnected = true;
       const ss = document.getElementById('syncStatus');
       if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
-
-      if(!_fbInit) {
-        _fbInit = true;
-        // First load: if Firebase empty and we have local data, push local up
-        const loc = (() => { try{ return JSON.parse(localStorage.getItem('vault_ops_v3')); }catch(e){ return null; } })();
-        if(loc && loc.jobs && loc.jobs.length > 0 && (!remote || !remote.jobs || remote.jobs.length === 0)) {
-          _fbRef.set(loc);
-          state = loc;
-        } else if(remote && remote.jobs && remote.jobs.length > 0) {
-          state = remote;
-          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
-        } else {
-          state = {jobs:[]};
-        }
+      const remote = snap.val();
+      const remoteEmpty = !remote || !remote.jobs || remote.jobs.length === 0;
+      const localRaw = localStorage.getItem('vault_ops_v3');
+      let local = null;
+      try { local = localRaw ? JSON.parse(localRaw) : null; } catch(e) {}
+      const localHas = local && local.jobs && local.jobs.length > 0;
+      if(localHas && remoteEmpty) {
+        // Push local up to Firebase
+        _fbRef.set(local);
+      } else if(!localHas && !remoteEmpty) {
+        // Only load from Firebase if we have nothing locally
+        state = remote;
+        localStorage.setItem('vault_ops_v3', JSON.stringify(state));
         if(typeof render === 'function') render();
-        return;
       }
-
-      // Subsequent: only accept if remote has MORE jobs (another device added something)
-      if(remote && remote.jobs) {
-        const cur = state.jobs ? state.jobs.length : 0;
-        if(remote.jobs.length > cur) {
-          state = remote;
-          localStorage.setItem('vault_ops_v3', JSON.stringify(state));
-          if(typeof render === 'function') render();
-        }
-      }
+      // If both have data, keep local - manager is the source of truth
     });
 
-    window._fbPush = function(s) {
-      _fbRef.set(s).catch(e => console.error('Firebase push error:', e));
+    // Push to Firebase every time we save
+    window._fbPush = function(data) {
+      if(_fbConnected) {
+        _fbRef.set(data).then(() => {
+          const ss = document.getElementById('syncStatus');
+          if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
+        }).catch(e => console.error('Push error:', e));
+      }
     };
   </script>
 </head>
