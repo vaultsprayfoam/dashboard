@@ -127,6 +127,7 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
 .badge-cc1{background:var(--blue-glow);color:#5dade2;border:1px solid rgba(41,128,185,0.3);}
 .badge-vac{background:rgba(127,140,141,0.15);color:#95a5a6;border:1px solid rgba(127,140,141,0.3);}
 .badge-fg{background:var(--green-glow);color:var(--green-light);border:1px solid rgba(39,174,96,0.3);}
+.badge-misc{background:rgba(155,89,182,0.15);color:#bb8fce;border:1px solid rgba(155,89,182,0.3);}
 .sb-sqft{font-size:12px;color:var(--text-muted);}
 .sb-budget{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--text-muted);}
 
@@ -438,7 +439,7 @@ const JOB_TYPES={
   cc15:{label:'Closed Cell 1.5"+', short:'CC 1.5"+',   rate:0.30,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-cc15'},
   oc4: {label:'Open Cell 4" Walls',short:'OC 4" Wall', rate:0.25,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-oc4'},
   cc1: {label:'Closed Cell 1"',    short:'CC 1"',      rate:0.25,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-cc1'},
-  vac: {label:'Vacuum/Extraction', short:'Vacuum',     rate:0.25,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-vac'},
+  vac: {label:'Vacuum/Extraction', short:'Vacuum',     rate:0.20,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-vac'},
   fg:  {label:'Fiberglass',        short:'Fiberglass', rate:0.25,sprayerPct:0.55,helperPct:0.45,badgeClass:'badge-fg'},
 };
 const ROLE_CYCLE={'':'sprayer','sprayer':'helper','helper':''};
@@ -488,8 +489,9 @@ function addServiceRow(containerId,defaultType,defaultSqft){
         <option value="cc15" ${defaultType==='cc15'?'selected':''}>Closed Cell 1.5"+ — $0.30/sqft</option>
         <option value="oc4" ${defaultType==='oc4'?'selected':''}>Open Cell 4" (Walls) — $0.25/sqft</option>
         <option value="cc1" ${defaultType==='cc1'?'selected':''}>Closed Cell 1" — $0.25/sqft</option>
-        <option value="vac" ${defaultType==='vac'?'selected':''}>Vacuum / Extraction — $0.25/sqft</option>
+        <option value="vac" ${defaultType==='vac'?'selected':''}>Vacuum / Extraction — $0.20/sqft</option>
         <option value="fg" ${defaultType==='fg'?'selected':''}>Fiberglass — $0.25/sqft</option>
+        <option value="misc" ${defaultType==='misc'?'selected':''}>Miscellaneous — $1.00/unit</option>
       </select>
     </div>
     <div class="fg"><label>Sq Ft</label>
@@ -935,7 +937,7 @@ function buildJobCard(job){
     return `<div class="service-row" id="${rowId}">
       <div class="fg"><label>Job Type</label>
         <select id="${rowId}_type">
-          ${Object.entries(JOB_TYPES).map(([k,v])=>`<option value="${k}" ${svc.typeKey===k?'selected':''}>${v.label}</option>`).join('')}
+          ${Object.entries(JOB_TYPES).map(([k,v])=>`<option value="${k}" ${svc.typeKey===k?'selected':''}>${k==='misc'?v.label+' — $1.00/unit':v.label}</option>`).join('')}
         </select>
       </div>
       <div class="fg"><label>Sq Ft</label><input type="number" id="${rowId}_sqft" value="${svc.sqft}" min="1"></div>
