@@ -299,9 +299,6 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
     const _fbRef = firebase.database().ref('vault_ops');
     let _fbConnected = false;
 
-    // Only listen ONCE on startup to check if Firebase is empty
-    // If Firebase is empty and we have local data, push it up
-    // After that, MANAGER NEVER READS FROM FIREBASE AGAIN
     _fbRef.once('value', snap => {
       _fbConnected = true;
       const ss = document.getElementById('syncStatus');
@@ -310,27 +307,20 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
       const remoteEmpty = !remote || !remote.jobs || remote.jobs.length === 0;
       const localRaw = localStorage.getItem('vault_ops_v3');
       let local = null;
-      try { local = localRaw ? JSON.parse(localRaw) : null; } catch(e) {}
+      try { local = localRaw ? JSON.parse(localRaw) : null; } catch(e){}
       const localHas = local && local.jobs && local.jobs.length > 0;
       if(localHas && remoteEmpty) {
-        // Push local up to Firebase
         _fbRef.set(local);
       } else if(!localHas && !remoteEmpty) {
-        // Only load from Firebase if we have nothing locally
-        state = remote;
+        state = sanitize(remote);
         localStorage.setItem('vault_ops_v3', JSON.stringify(state));
         if(typeof render === 'function') render();
       }
-      // If both have data, keep local - manager is the source of truth
     });
 
-    // Push to Firebase every time we save
     window._fbPush = function(data) {
       if(_fbConnected) {
-        _fbRef.set(data).then(() => {
-          const ss = document.getElementById('syncStatus');
-          if(ss) ss.innerHTML = '<span style="color:#2ECC71">● live</span>';
-        }).catch(e => console.error('Push error:', e));
+        _fbRef.set(data).catch(e => console.error('Push error:', e));
       }
     };
   </script>
@@ -953,7 +943,26 @@ function buildJobCard(job){
       </div>
     </div>
 
-    <div class="jc-services">${svcsHtml}</div>
+    <div class="jc-services">
+      ${svcsHtml}
+      <div style="padding:14px 0 4px 0;border-top:1px solid var(--border);margin-top:8px;">
+        <div style="font-size:9px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:10px;">Work Days Logged</div>
+        <div class="day-entries">${dayEntriesHtml}</div>
+        ${isOpen?`<div class="add-day-form" style="margin-top:10px;">
+          <div class="add-day-label">+ Log a Work Day</div>
+          <div class="adf-top" style="margin-bottom:10px;">
+            <div class="fg"><label>Date</label><input type="date" id="jde_date_${job.id}" value="${currentDate}"></div>
+          </div>
+          <div style="margin-bottom:8px;">
+            <div style="font-size:9px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:6px;">Services worked today</div>
+            ${svcCheckboxes}
+          </div>
+          <div class="crew-select-row">${crewBtnsHtml}</div>
+          <div class="role-hint">Click once = Sprayer · twice = Helper · third = remove</div>
+          <button class="add-day-btn" onclick="addJobDayEntry(${job.id})">+ Log This Work Day</button>
+        </div>`:''}
+      </div>
+    </div>
 
     <!-- EXTRAS -->
     <div class="jc-extras">

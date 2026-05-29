@@ -182,28 +182,15 @@ function calcJobPay(job){
 }
 
 function calcDayPay(job,dateStr){
-  let pay=0;
-  (job.services||[]).forEach(svc=>{
-    const jt=JT[svc.typeKey];if(!jt)return;
-    const allDates=[...new Set((svc.dayEntries||[]).map(d=>d.date))];
-    const totalDays=allDates.length;if(!totalDays)return;
-    const single=totalDays===1;
-    const perDay=(svc.sqft*jt.rate)/totalDays;
-    (svc.dayEntries||[]).filter(de=>de.date===dateStr).forEach(de=>{
-      const me=de.crew&&de.crew.find(c=>c.installerId===MY_ID);if(!me)return;
-      const isSp=me.role==='sprayer';
-      const myGroup=(de.crew||[]).filter(c=>c.role===me.role);
-      const grpBudget=perDay*(isSp?jt.spPct:jt.hlPct);
-      const share=myGroup.length?grpBudget/myGroup.length:0;
-      const min=isSp?MINS.sprayer:MINS.helper;
-      pay+=single?Math.max(share,min):share;
-    });
-  });
-  return pay;
+  // For display purposes - show their proportional share based on total job man-days
+  // This is an estimate since final pay depends on total job completion
+  return calcJobPay(job).total;
 }
 
 function amIOn(job,dateStr){
-  return (job.services||[]).some(svc=>(svc.dayEntries||[]).some(de=>de.date===dateStr&&(de.crew||[]).some(c=>c.installerId===MY_ID)));
+  const inSvc=(job.services||[]).some(svc=>(svc.dayEntries||[]).some(de=>de.date===dateStr&&(de.crew||[]).some(c=>c.installerId===MY_ID)));
+  const inJob=(job.dayEntries||[]).some(de=>de.date===dateStr&&(de.crew||[]).some(c=>c.installerId===MY_ID));
+  return inSvc||inJob;
 }
 
 let allJobs=[];
@@ -330,7 +317,6 @@ db.ref('vault_ops').on('value',snap=>{
       messagingSenderId:"664365786455",
       appId:"1:664365786455:web:0958942e3747caeec0ca12"
     });
-    // INSTALLER = READ ONLY. Never writes to Firebase.
     firebase.database().ref('vault_ops').on('value', snap => {
       const data = snap.val();
       const ss = document.getElementById('syncStatus');
