@@ -569,51 +569,60 @@ function createJob(){
 //     helpers on that day split helperPct * budgetPerDay equally
 //     Min pay applies ONLY if job is single-day (totalDays===1)
 function calcServicePay(service){
-  // returns map: installerId -> totalPay
-  const payMap={};
-  INSTALLERS.forEach(i=>payMap[i.id]=0);
-  const allDates=[...new Set(service.dayEntries.map(d=>d.date))];
-  const totalDays=allDates.length;
-  if(totalDays===0)return payMap;
-  const jt=JOB_TYPES[service.typeKey];
+  const payMap={};INSTALLERS.forEach(i=>payMap[i.id]=0);
+  const entries=service.dayEntries||[];if(!entries.length)return payMap;
+  const jt=JOB_TYPES[service.typeKey];if(!jt)return payMap;
   const totalBudget=service.sqft*jt.rate;
-  const budgetPerDay=totalBudget/totalDays;
-  const isSingleDay=totalDays===1;
-
-  service.dayEntries.forEach(entry=>{
-    const sprayers=entry.crew.filter(c=>c.role==='sprayer');
-    const helpers=entry.crew.filter(c=>c.role==='helper');
-    const sprayerBudget=budgetPerDay*jt.sprayerPct;
-    const helperBudget=budgetPerDay*jt.helperPct;
-
-    sprayers.forEach(c=>{
-      const share=sprayers.length>0?sprayerBudget/sprayers.length:0;
-      const inst=INSTALLERS.find(i=>i.id===c.installerId);
-      const min=inst?inst.minPay:200;
-      const payout=isSingleDay?Math.max(share,min):share;
-      payMap[c.installerId]=(payMap[c.installerId]||0)+payout;
-    });
-    helpers.forEach(c=>{
-      const share=helpers.length>0?helperBudget/helpers.length:0;
-      const inst=INSTALLERS.find(i=>i.id===c.installerId);
-      const min=inst?inst.minPay:160;
-      const payout=isSingleDay?Math.max(share,min):share;
-      payMap[c.installerId]=(payMap[c.installerId]||0)+payout;
-    });
-  });
+  const spBudget=totalBudget*jt.sprayerPct,hlBudget=totalBudget*jt.helperPct;
+  let totSp=0,totHl=0;const spD={},hlD={};
+  entries.forEach(e=>(e.crew||[]).forEach(c=>{
+    if(c.role==='sprayer'){totSp++;spD[c.installerId]=(spD[c.installerId]||0)+1;}
+    else if(c.role==='helper'){totHl++;hlD[c.installerId]=(hlD[c.installerId]||0)+1;}
+  }));
+  Object.entries(spD).forEach(([id,d])=>{payMap[id]=(payMap[id]||0)+(totSp>0?(d/totSp)*spBudget:0);});
+  Object.entries(hlD).forEach(([id,d])=>{payMap[id]=(payMap[id]||0)+(totHl>0?(d/totHl)*hlBudget:0);});
   return payMap;
 }
 
 function calcJobPayMap(job){
   const payMap={};
   INSTALLERS.forEach(i=>payMap[i.id]=0);
-  job.services.forEach(svc=>{
-    const svcPay=calcServicePay(svc);
-    INSTALLERS.forEach(i=>payMap[i.id]+=svcPay[i.id]);
+  // Get all unique dates across all services
+  const allDates=new Set();
+  job.services.forEach(svc=>(svc.dayEntries||[]).forEach(de=>allDates.add(de.date)));
+  // For each date, sum raw pay per person across ALL services, then apply minimum ONCE
+  allDates.forEach(date=>{
+    const rawPay={};
+    job.services.forEach(svc=>{
+      const jt=JOB_TYPES[svc.typeKey];if(!jt)return;
+      const svcEntries=svc.dayEntries||[];
+      const dayEntry=svcEntries.find(de=>de.date===date);if(!dayEntry)return;
+      const totalBudget=svc.sqft*jt.rate;
+      const spD={},hlD={};let totSp=0,totHl=0;
+      svcEntries.forEach(e=>(e.crew||[]).forEach(c=>{
+        if(c.role==='sprayer'){totSp++;spD[c.installerId]=(spD[c.installerId]||0)+1;}
+        else if(c.role==='helper'){totHl++;hlD[c.installerId]=(hlD[c.installerId]||0)+1;}
+      }));
+      const spBudget=totalBudget*jt.sprayerPct,hlBudget=totalBudget*jt.helperPct;
+      (dayEntry.crew||[]).forEach(c=>{
+        const isSp=c.role==='sprayer';
+        const days=isSp?spD[c.installerId]:hlD[c.installerId];
+        const tot=isSp?totSp:totHl;
+        const budget=isSp?spBudget:hlBudget;
+        const raw=tot>0?(days/tot)*budget:0;
+        if(!rawPay[c.installerId])rawPay[c.installerId]={pay:0,role:c.role};
+        rawPay[c.installerId].pay+=raw;
+        rawPay[c.installerId].role=c.role;
+      });
+    });
+    // Apply minimum ONCE per person per day at job level
+    Object.entries(rawPay).forEach(([id,{pay,role}])=>{
+      const minPay=role==='sprayer'?200:160;
+      payMap[id]=(payMap[id]||0)+Math.max(pay,minPay);
+    });
   });
-  // add extras
   (job.extras||[]).forEach(ex=>{
-    if(payMap[ex.installerId]!==undefined) payMap[ex.installerId]+=ex.amount;
+    if(payMap[ex.installerId]!==undefined)payMap[ex.installerId]+=ex.amount;
   });
   return payMap;
 }
