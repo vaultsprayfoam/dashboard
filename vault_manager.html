@@ -298,7 +298,6 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
     });
     const _fbRef = firebase.database().ref('vault_ops');
     let _fbConnected = false;
-
     _fbRef.once('value', snap => {
       _fbConnected = true;
       const ss = document.getElementById('syncStatus');
@@ -309,19 +308,15 @@ main{max-width:1200px;margin:0 auto;padding:28px 24px 80px;}
       let local = null;
       try { local = localRaw ? JSON.parse(localRaw) : null; } catch(e){}
       const localHas = local && local.jobs && local.jobs.length > 0;
-      if(localHas && remoteEmpty) {
-        _fbRef.set(local);
-      } else if(!localHas && !remoteEmpty) {
+      if(localHas && remoteEmpty) { _fbRef.set(local); }
+      else if(!localHas && !remoteEmpty) {
         state = sanitize(remote);
         localStorage.setItem('vault_ops_v3', JSON.stringify(state));
         if(typeof render === 'function') render();
       }
     });
-
     window._fbPush = function(data) {
-      if(_fbConnected) {
-        _fbRef.set(data).catch(e => console.error('Push error:', e));
-      }
+      if(_fbConnected) _fbRef.set(data).catch(e=>console.error('Push error:',e));
     };
   </script>
 </head>
@@ -742,6 +737,60 @@ function saveExtras(jobId){
   saveState();showToast('Extras saved');render();
 }
 
+function cycleJobRole(btn,jobId){
+  const key=`job_${jobId}`;
+  if(!addDayRoles[key])addDayRoles[key]={};
+  const id=btn.dataset.installer;
+  const cur=addDayRoles[key][id]||'';
+  const next=ROLE_CYCLE[cur];
+  addDayRoles[key][id]=next;
+  btn.classList.remove('sel-sprayer','sel-helper');
+  if(next==='sprayer')btn.classList.add('sel-sprayer');
+  else if(next==='helper')btn.classList.add('sel-helper');
+}
+function addJobDayEntry(jobId){
+  const dateEl=document.getElementById(`jde_date_${jobId}`);
+  const date=dateEl?dateEl.value:currentDate;
+  if(!date){showToast('Select a date');return;}
+  const key=`job_${jobId}`;
+  const roles=addDayRoles[key]||{};
+  const crew=INSTALLERS.filter(i=>roles[i.id]&&roles[i.id]!=='').map(i=>({installerId:i.id,role:roles[i.id]}));
+  if(!crew.length){showToast('Assign at least one installer');return;}
+  const job=state.jobs.find(j=>j.id===jobId);
+  if(!job)return;
+  const checkedSvcs=job.services.filter(svc=>{
+    const chk=document.getElementById(`svc_chk_${jobId}_${svc.id}`);
+    return chk&&chk.checked;
+  }).map(svc=>svc.id);
+  if(!checkedSvcs.length){showToast('Select at least one service');return;}
+  if(!job.dayEntries)job.dayEntries=[];
+  checkedSvcs.forEach(svcId=>{
+    const svc=job.services.find(s=>s.id===svcId);
+    if(svc){if(!svc.dayEntries)svc.dayEntries=[];svc.dayEntries.push({date,crew});}
+  });
+  job.dayEntries.push({date,crew,services:checkedSvcs});
+  saveState();
+  addDayRoles[key]={};
+  showToast('Day logged');render();
+}
+function removeJobDayEntry(jobId,idx){
+  const job=state.jobs.find(j=>j.id===jobId);
+  if(!job||!job.dayEntries)return;
+  const entry=job.dayEntries[idx];
+  if(entry&&entry.services){
+    entry.services.forEach(svcId=>{
+      const svc=job.services.find(s=>s.id===svcId);
+      if(svc&&svc.dayEntries){
+        svc.dayEntries=svc.dayEntries.filter(de=>
+          !(de.date===entry.date&&JSON.stringify(de.crew)===JSON.stringify(entry.crew))
+        );
+      }
+    });
+  }
+  job.dayEntries.splice(idx,1);
+  saveState();render();
+}
+
 function toggleJobStatus(jobId){
   const job=state.jobs.find(j=>j.id===jobId);
   if(!job)return;
@@ -804,95 +853,85 @@ function renderJobsTab(){
 }
 
 function buildJobCard(job){
-  const isOpen=job.status==='open';
-  const payMap=calcJobPayMap(job);
-  const totalPaid=Object.values(payMap).reduce((s,v)=>s+v,0);
+  const isOpen = job.status === 'open';
+  const payMap = calcJobPayMap(job);
+  const totalPaid = Object.values(payMap).reduce((s,v)=>s+v, 0);
 
-  // Services HTML
-  const svcsHtml=job.services.map(svc=>{
-    const jt=JOB_TYPES[svc.typeKey];
-    const svcBudget=svc.sqft*jt.rate;
-    const allDates=[...new Set(svc.dayEntries.map(d=>d.date))];
-    const totalDays=allDates.length;
-    const isSingleDay=totalDays===1;
-    const budgetPerDay=totalDays>0?svcBudget/totalDays:0;
-
-    const dayEntriesHtml=svc.dayEntries.length===0
-      ?'<div style="font-size:11px;color:var(--text-dim);padding:4px 0;">No crew logged yet</div>'
-      :svc.dayEntries.map((entry,idx)=>{
-          const sprayers=entry.crew.filter(c=>c.role==='sprayer');
-          const helpers=entry.crew.filter(c=>c.role==='helper');
-          const sprayerBudget=budgetPerDay*jt.sprayerPct;
-          const helperBudget=budgetPerDay*jt.helperPct;
-          const chipsHtml=entry.crew.map(cm=>{
-            const inst=INSTALLERS.find(i=>i.id===cm.installerId);
-            const isSprayer=cm.role==='sprayer';
-            const groupBudget=isSprayer?sprayerBudget:helperBudget;
-            const groupCount=isSprayer?sprayers.length:helpers.length;
-            const share=groupCount>0?groupBudget/groupCount:0;
-            const min=inst?inst.minPay:160;
-            const payout=isSingleDay?Math.max(share,min):share;
-            const usedMin=isSingleDay&&share<min;
-            return `<div class="de-chip"><div class="av ${cm.role}">${inst?inst.initials:'?'}</div><span class="cname">${inst?inst.name:'?'}</span><span class="cpay ${usedMin?'min':''}">${fmtMoney(payout)}</span></div>`;
-          }).join('');
-          const dayTotal=entry.crew.reduce((s,cm)=>{
-            const inst=INSTALLERS.find(i=>i.id===cm.installerId);
-            const isSprayer=cm.role==='sprayer';
-            const groupBudget=isSprayer?sprayerBudget:helperBudget;
-            const groupCount=isSprayer?sprayers.length:helpers.length;
-            const share=groupCount>0?groupBudget/groupCount:0;
-            const min=inst?inst.minPay:160;
-            return s+(isSingleDay?Math.max(share,min):share);
-          },0);
-          return `<div class="day-entry">
-            <div class="de-date">📅 ${fmtDate(new Date(entry.date+'T00:00:00'))}</div>
-            <div class="de-crew">${chipsHtml}</div>
-            <div class="de-day-total">${fmtMoney(dayTotal)}</div>
-            <button class="de-del" onclick="removeDayEntry(${job.id},${svc.id},${idx})">✕</button>
-          </div>`;
-        }).join('');
-
-    const key=`${job.id}_${svc.id}`;
-    const roles=addDayRoles[key]||{};
-    const crewBtnsHtml=INSTALLERS.map(inst=>{
-      const r=roles[inst.id]||'';
-      let cls='crew-toggle';
-      if(r==='sprayer')cls+=' sel-sprayer';
-      else if(r==='helper')cls+=' sel-helper';
-      return `<button class="${cls}" data-installer="${inst.id}" onclick="cycleRole(this,${job.id},${svc.id})">${inst.name}</button>`;
-    }).join('');
-
+  // ── SERVICE SUMMARY (read-only display) ──
+  const svcsHtml = job.services.map(svc => {
+    const jt = JOB_TYPES[svc.typeKey];
+    if(!jt) return '';
+    const svcBudget = svc.sqft * jt.rate;
+    const manDays = (svc.dayEntries||[]).reduce((s,de)=>s+(de.crew||[]).length, 0);
     return `<div class="service-block">
       <div class="sb-header">
         <div class="sb-left">
           <span class="sb-badge ${jt.badgeClass}">${jt.short}</span>
-          <span class="sb-sqft">${svc.sqft.toLocaleString()} sqft · ${totalDays} day${totalDays!==1?'s':''}</span>
+          <span class="sb-sqft">${svc.sqft.toLocaleString()} sqft · ${manDays} man-day${manDays!==1?'s':''}</span>
         </div>
         <div class="sb-budget">${fmtMoney(svcBudget)}</div>
       </div>
-      <div class="day-entries">${dayEntriesHtml}</div>
-      ${isOpen?`<div class="add-day-form">
-        <div class="add-day-label">+ Log Crew Day</div>
-        <div class="adf-top"><div class="fg"><label>Date</label><input type="date" id="de_date_${job.id}_${svc.id}" value="${currentDate}"></div></div>
-        <div class="crew-select-row">${crewBtnsHtml}</div>
-        <div class="role-hint">Click once = Sprayer · twice = Helper · third = remove</div>
-        <button class="add-day-btn" onclick="addDayEntry(${job.id},${svc.id})">+ Log This Crew Day</button>
-      </div>`:''}
     </div>`;
   }).join('');
 
-  // Extras
-  const extrasSummaryHtml=(job.extras||[]).length===0
-    ?'<div style="font-size:11px;color:var(--text-dim);">None added</div>'
-    :(job.extras||[]).map(ex=>{
-        const inst=INSTALLERS.find(i=>i.id===ex.installerId);
-        return `<div class="extra-chip"><span class="ec-name">${inst?inst.name:'?'}</span><span class="ec-amt">${ex.amount>=0?'+':''}${fmtMoney(ex.amount)}</span>${ex.note?`<span class="ec-note">— ${escHtml(ex.note)}</span>`:''}</div>`;
+  // ── JOB-LEVEL DAY ENTRIES ──
+  const allEntries = job.dayEntries || [];
+  const dayEntriesHtml = allEntries.length === 0
+    ? '<div style="font-size:11px;color:var(--text-dim);padding:6px 0;">No crew logged yet</div>'
+    : allEntries.map((entry, idx) => {
+        const chipsHtml = (entry.crew||[]).map(cm => {
+          const inst = INSTALLERS.find(i=>i.id===cm.installerId);
+          return `<div class="de-chip">
+            <div class="av ${cm.role}">${inst?inst.initials:'?'}</div>
+            <span class="cname">${inst?inst.name:'?'}</span>
+            <span style="font-size:9px;color:var(--text-dim);margin-left:3px;">${cm.role}</span>
+          </div>`;
+        }).join('');
+        const svcLabels = (entry.services||[]).map(sid => {
+          const svc = job.services.find(s=>s.id===sid);
+          const jt = svc ? JOB_TYPES[svc.typeKey] : null;
+          return jt ? `<span class="sb-badge ${jt.badgeClass}" style="font-size:8px;padding:2px 6px;">${jt.short}</span>` : '';
+        }).join('');
+        return `<div class="day-entry">
+          <div class="de-date">📅 ${fmtDate(new Date(entry.date+'T00:00:00'))} ${svcLabels}</div>
+          <div class="de-crew">${chipsHtml}</div>
+          <button class="de-del" onclick="removeJobDayEntry(${job.id},${idx})">✕</button>
+        </div>`;
       }).join('');
 
-  // Edit panel - pre-populate edit services container
-  const editSvcsId=`esvcs_${job.id}`;
-  const editSvcsRows=job.services.map(svc=>{
-    const rowId='svc_edit_'+(++svcCount);
+  // ── ADD DAY FORM ──
+  const jobRoles = addDayRoles[`job_${job.id}`] || {};
+  const crewBtnsHtml = INSTALLERS.map(inst => {
+    const r = jobRoles[inst.id] || '';
+    let cls = 'crew-toggle';
+    if(r==='sprayer') cls += ' sel-sprayer';
+    else if(r==='helper') cls += ' sel-helper';
+    return `<button class="${cls}" data-installer="${inst.id}" onclick="cycleJobRole(this,${job.id})">${inst.name}</button>`;
+  }).join('');
+
+  const svcCheckboxes = job.services.map(svc => {
+    const jt = JOB_TYPES[svc.typeKey];
+    if(!jt) return '';
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text);cursor:pointer;padding:4px 0;">
+      <input type="checkbox" id="svc_chk_${job.id}_${svc.id}" value="${svc.id}" style="accent-color:var(--crimson);width:14px;height:14px;" checked>
+      <span class="sb-badge ${jt.badgeClass}" style="font-size:9px;">${jt.short}</span>
+      <span style="color:var(--text-muted)">${svc.sqft.toLocaleString()} sqft</span>
+    </label>`;
+  }).join('');
+
+  // ── PAY SUMMARY CHIPS ──
+  const payChips = INSTALLERS.filter(inst => payMap[inst.id] > 0).map(inst => {
+    return `<div class="de-chip">
+      <div class="av ${inst.defaultRole}">${inst.initials}</div>
+      <span class="cname">${inst.name}</span>
+      <span class="cpay">${fmtMoney(payMap[inst.id])}</span>
+    </div>`;
+  }).join('');
+
+  // ── EDIT PANEL ──
+  const editSvcsId = `esvcs_${job.id}`;
+  const editSvcsRows = job.services.map(svc => {
+    const rowId = 'svc_edit_'+(++svcCount);
     return `<div class="service-row" id="${rowId}">
       <div class="fg"><label>Job Type</label>
         <select id="${rowId}_type">
@@ -903,6 +942,11 @@ function buildJobCard(job){
       <button class="remove-btn" onclick="removeServiceRow('${rowId}','${editSvcsId}')">✕</button>
     </div>`;
   }).join('');
+
+  const adjDisplay = job.adjustment !== 0
+    ? `<span class="adj-display ${job.adjustment>0?'pos':'neg'}">${job.adjustment>0?'+':''}${fmtMoney(job.adjustment)}</span>
+       ${job.adjustmentNote?`<span class="adj-reason">— ${escHtml(job.adjustmentNote)}</span>`:''}`
+    : '<span style="color:var(--text-dim);font-size:12px;">None</span>';
 
   return `<div class="job-card">
     <div class="jc-header">
@@ -925,7 +969,6 @@ function buildJobCard(job){
       </div>
     </div>
 
-    <!-- EDIT PANEL -->
     <div class="edit-panel" id="edit_${job.id}">
       <div class="edit-panel-title">✏ Edit Job</div>
       <div class="form-row form-3" style="margin-bottom:12px;">
@@ -947,6 +990,7 @@ function buildJobCard(job){
       ${svcsHtml}
       <div style="padding:14px 0 4px 0;border-top:1px solid var(--border);margin-top:8px;">
         <div style="font-size:9px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;font-weight:600;margin-bottom:10px;">Work Days Logged</div>
+        ${payChips ? `<div class="crew-pay-grid" style="margin-bottom:10px;">${payChips}</div>` : ''}
         <div class="day-entries">${dayEntriesHtml}</div>
         ${isOpen?`<div class="add-day-form" style="margin-top:10px;">
           <div class="add-day-label">+ Log a Work Day</div>
@@ -964,13 +1008,12 @@ function buildJobCard(job){
       </div>
     </div>
 
-    <!-- EXTRAS -->
-    <div class="jc-extras">
-      <div class="extras-title">Extra Pay</div>
-      <div class="extra-rows" id="extra_rows_${job.id}"></div>
-      <button class="add-extra-btn" onclick="addExtraRow(${job.id})">+ Add Extra Pay</button>
-      <button class="save-extras-btn" onclick="saveExtras(${job.id})">Save Extras</button>
-      <div class="extras-summary">${extrasSummaryHtml}</div>
+    <div class="jc-adjustment">
+      <div class="adj-label">Adjustment</div>
+      <input class="adj-input" type="number" id="adj_amt_${job.id}" value="${job.adjustment||''}" placeholder="+/- $" step="any">
+      <input class="adj-note" type="text" id="adj_note_${job.id}" value="${escHtml(job.adjustmentNote||'')}" placeholder="Reason">
+      <button class="adj-save" onclick="saveAdjustment(${job.id})">Save</button>
+      <div>${adjDisplay}</div>
     </div>
 
     <div class="jc-footer">
